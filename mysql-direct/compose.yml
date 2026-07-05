@@ -1,0 +1,73 @@
+# =========================================================================
+# compose.yml
+# mysql-db-maintenance.sh の動作検証用コンテナ環境
+#
+#   rhel9   : EC2 (RHEL 9) 相当のクライアントコンテナ (AlmaLinux 9 / 無償)
+#             mysql クライアント + Java 17 + MySQL Connector/J 導入済み。
+#             リポジトリ全体を /work にマウントする (common.sh / java/ を共用するため)
+#   mysql80 : 接続先の MySQL 8.0 サーバ
+#   mysql84 : 接続先の MySQL 8.4 サーバ
+#             (mysql_native_password は 8.4 では既定で無効のため ON にして起動)
+#
+# 使い方:
+#   docker compose up -d --build
+#   docker compose exec rhel9 ./verify-connections.sh   # 全パターンの接続検証
+#   docker compose down -v                              # 後片付け
+# =========================================================================
+
+services:
+  mysql80:
+    image: mysql:8.0
+    container_name: mysql-direct-mysql80
+    environment:
+      MYSQL_ROOT_PASSWORD: RootPass80!
+      MYSQL_DATABASE: appdb
+      TZ: Asia/Tokyo
+    volumes:
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "13306:3306"   # ホストからのデバッグ接続用 (任意)
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  mysql84:
+    image: mysql:8.4
+    container_name: mysql-direct-mysql84
+    # MySQL 8.4 では mysql_native_password プラグインが既定で無効のため、
+    # 検証用に有効化して起動する (8.0 互換のパスワード認証も試験するため)
+    command: ["mysqld", "--mysql-native-password=ON"]
+    environment:
+      MYSQL_ROOT_PASSWORD: RootPass84!
+      MYSQL_DATABASE: appdb
+      TZ: Asia/Tokyo
+    volumes:
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "13384:3306"   # ホストからのデバッグ接続用 (任意)
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  rhel9:
+    build:
+      context: docker/rhel9
+    container_name: mysql-direct-rhel9
+    # common.sh / java/JdbcSqlRunner.java を Aurora 版と共用するため
+    # リポジトリのルートごとマウントする
+    volumes:
+      - ..:/work
+    working_dir: /work/mysql-direct
+    depends_on:
+      mysql80:
+        condition: service_healthy
+      mysql84:
+        condition: service_healthy
+    init: true
+    command: ["sleep", "infinity"]
